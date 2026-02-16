@@ -6,14 +6,13 @@ struct TranslationRow: Identifiable {
     let id = UUID()
     let original: String
     let translated: String
-    let price: String?
 }
 
 struct ShareView: View {
     let extensionContext: NSExtensionContext?
 
     @State private var image: UIImage?
-    @State private var textGroups: [TextGroup] = []
+    @State private var recognizedLines: [String] = []
     @State private var rows: [TranslationRow] = []
     @State private var isLoading = true
     @State private var statusMessage: String = "Loading image..."
@@ -83,7 +82,7 @@ struct ShareView: View {
                 }
             }
             .translationTask(translationConfig) { session in
-                await translateGroups(using: session)
+                await translateLines(using: session)
             }
         }
         .task {
@@ -116,35 +115,19 @@ struct ShareView: View {
             // Rows
             ForEach(rows) { row in
                 HStack(alignment: .top, spacing: 0) {
-                    // Original column: text + price
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.original)
-                            .font(.body)
-                        if let price = row.price {
-                            Text(price)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .textSelection(.enabled)
+                    Text(row.original)
+                        .font(.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .textSelection(.enabled)
 
                     Divider()
 
-                    // Translation column: translated text + price
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.translated)
-                            .font(.body)
-                        if let price = row.price {
-                            Text(price)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .textSelection(.enabled)
+                    Text(row.translated)
+                        .font(.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .textSelection(.enabled)
                 }
                 Divider()
             }
@@ -158,19 +141,18 @@ struct ShareView: View {
 
     // MARK: - Translation Logic
 
-    private func translateGroups(using session: TranslationSession) async {
-        // Collect groups that have translatable text (not just prices/numbers)
-        let translatableGroups = textGroups.filter { !isSkippable($0.translatableText) }
+    private func translateLines(using session: TranslationSession) async {
+        let translatableLines = recognizedLines.filter { !isSkippable($0) }
 
-        guard !translatableGroups.isEmpty else {
-            // Everything is prices/numbers
-            rows = textGroups.map { TranslationRow(original: $0.text, translated: $0.text, price: $0.price) }
+        guard !translatableLines.isEmpty else {
+            // Everything is prices/numbers — show as-is
+            rows = recognizedLines.map { TranslationRow(original: $0, translated: $0) }
             return
         }
 
-        // Batch translate
-        let requests = translatableGroups.enumerated().map { (index, group) in
-            TranslationSession.Request(sourceText: group.translatableText, clientIdentifier: "\(index)")
+        // Batch translate only non-skippable lines
+        let requests = translatableLines.enumerated().map { (index, line) in
+            TranslationSession.Request(sourceText: line, clientIdentifier: "\(index)")
         }
 
         do {
@@ -181,21 +163,21 @@ struct ShareView: View {
                 translationMap[response.sourceText] = response.targetText
             }
 
-            rows = textGroups.map { group in
-                if isSkippable(group.translatableText) {
-                    return TranslationRow(original: group.text, translated: group.text, price: group.price)
+            rows = recognizedLines.map { line in
+                if isSkippable(line) {
+                    return TranslationRow(original: line, translated: line)
                 } else {
-                    let translated = translationMap[group.translatableText] ?? group.translatableText
-                    return TranslationRow(original: group.text, translated: translated, price: group.price)
+                    let translated = translationMap[line] ?? line
+                    return TranslationRow(original: line, translated: translated)
                 }
             }
         } catch {
             errorMessage = "Translation failed: \(error.localizedDescription)"
-            rows = textGroups.map { TranslationRow(original: $0.text, translated: "", price: $0.price) }
+            rows = recognizedLines.map { TranslationRow(original: $0, translated: "") }
         }
     }
 
-    /// Returns true if the text should be skipped for translation.
+    /// Returns true if the text should be skipped for translation (numbers, prices, etc.).
     private func isSkippable(_ text: String) -> Bool {
         let stripped = text.trimmingCharacters(in: .whitespaces)
         guard !stripped.isEmpty else { return true }
@@ -251,8 +233,8 @@ struct ShareView: View {
 
         statusMessage = "Recognizing text..."
         do {
-            textGroups = try await TextRecognizer.recognizeGrouped(in: image!)
-            debugInfo += "\nGroups: \(textGroups.count)"
+            let fullText = try await TextRecognizer.recognizeText(in: image!)
+            recognizedLines = fullText.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         } catch {
             if let recognitionError = error as? RecognitionError,
                case .noTextFound = recognitionError {
