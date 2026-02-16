@@ -15,6 +15,7 @@
 		A10103 /* ImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20103 /* ImageLoader.swift */; };
 		A10104 /* TextRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20104 /* TextRecognizer.swift */; };
 		A10105 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20105 /* Assets.xcassets */; };
+		A10106 /* ImageOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20107 /* ImageOverlayView.swift */; };
 		A10201 /* TranslateExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A30101 /* TranslateExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -52,6 +53,7 @@
 		A20104 /* TextRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextRecognizer.swift; sourceTree = "<group>"; };
 		A20105 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20106 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20107 /* ImageOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageOverlayView.swift; sourceTree = "<group>"; };
 		A30001 /* GoogleMapsTranslator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GoogleMapsTranslator.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A30101 /* TranslateExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TranslateExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -100,6 +102,7 @@
 				A20102 /* ShareView.swift */,
 				A20103 /* ImageLoader.swift */,
 				A20104 /* TextRecognizer.swift */,
+				A20107 /* ImageOverlayView.swift */,
 				A20105 /* Assets.xcassets */,
 				A20106 /* Info.plist */,
 			);
@@ -228,6 +231,7 @@
 				A10102 /* ShareView.swift in Sources */,
 				A10103 /* ImageLoader.swift in Sources */,
 				A10104 /* TextRecognizer.swift in Sources */,
+				A10106 /* ImageOverlayView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

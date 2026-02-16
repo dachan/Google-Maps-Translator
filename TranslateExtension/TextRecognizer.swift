@@ -15,10 +15,18 @@ enum RecognitionError: LocalizedError {
     }
 }
 
+/// A recognized text block with its bounding box in normalized Vision coordinates.
+struct PositionedText: Identifiable {
+    let id = UUID()
+    let text: String
+    /// Bounding box in normalized image coordinates (origin at bottom-left, y increases upward).
+    let boundingBox: CGRect
+}
+
 struct TextRecognizer {
 
-    /// Performs OCR on the given image and returns all recognized text.
-    static func recognizeText(in image: UIImage) async throws -> String {
+    /// Performs OCR and returns text with bounding box positions.
+    static func recognizeWithPositions(in image: UIImage) async throws -> [PositionedText] {
         guard let cgImage = image.cgImage else {
             throw RecognitionError.invalidImage
         }
@@ -36,14 +44,18 @@ struct TextRecognizer {
                     return
                 }
 
-                let text = observations
-                    .compactMap { $0.topCandidates(1).first?.string }
-                    .joined(separator: "\n")
+                let results = observations.compactMap { observation -> PositionedText? in
+                    guard let candidate = observation.topCandidates(1).first else { return nil }
+                    return PositionedText(
+                        text: candidate.string,
+                        boundingBox: observation.boundingBox
+                    )
+                }
 
-                if text.isEmpty {
+                if results.isEmpty {
                     continuation.resume(throwing: RecognitionError.noTextFound)
                 } else {
-                    continuation.resume(returning: text)
+                    continuation.resume(returning: results)
                 }
             }
 
@@ -58,5 +70,11 @@ struct TextRecognizer {
                 continuation.resume(throwing: RecognitionError.recognitionFailed(error))
             }
         }
+    }
+
+    /// Performs OCR on the given image and returns all recognized text as a single string.
+    static func recognizeText(in image: UIImage) async throws -> String {
+        let positioned = try await recognizeWithPositions(in: image)
+        return positioned.map(\.text).joined(separator: "\n")
     }
 }

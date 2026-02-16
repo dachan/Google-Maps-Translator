@@ -12,65 +12,28 @@ struct ShareView: View {
     let extensionContext: NSExtensionContext?
 
     @State private var image: UIImage?
+    @State private var positionedTexts: [PositionedText] = []
     @State private var recognizedLines: [String] = []
     @State private var rows: [TranslationRow] = []
+    @State private var overlays: [TranslatedOverlay] = []
     @State private var isLoading = true
     @State private var statusMessage: String = "Loading image..."
     @State private var errorMessage: String?
     @State private var debugInfo: String = ""
     @State private var translationConfig: TranslationSession.Configuration?
+    @State private var selectedTab = 0
+    @State private var showOverlay = true
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    if let image {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxHeight: 250)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-
-                    if !rows.isEmpty {
-                        translationTable
-                    }
-
-                    if isLoading {
-                        VStack(spacing: 8) {
-                            ProgressView()
-                            Text(statusMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding()
-                    }
-
-                    if let errorMessage {
-                        VStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.title)
-                                .foregroundStyle(.orange)
-                            Text(errorMessage)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding()
-                    }
-
-                    if !debugInfo.isEmpty {
-                        GroupBox {
-                            Text(debugInfo)
-                                .font(.caption2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        } label: {
-                            Label("Debug", systemImage: "ladybug")
-                        }
-                    }
+            VStack(spacing: 0) {
+                if isLoading {
+                    loadingView
+                } else if let errorMessage {
+                    errorView(errorMessage)
+                } else {
+                    tabContent
                 }
-                .padding()
             }
             .navigationTitle("Translate")
             .navigationBarTitleDisplayMode(.inline)
@@ -78,6 +41,15 @@ struct ShareView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
                         extensionContext?.completeRequest(returningItems: nil)
+                    }
+                }
+                if selectedTab == 1 && image != nil && !overlays.isEmpty {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showOverlay.toggle()
+                        } label: {
+                            Image(systemName: showOverlay ? "eye.fill" : "eye.slash.fill")
+                        }
                     }
                 }
             }
@@ -88,6 +60,105 @@ struct ShareView: View {
         .task {
             await process()
         }
+    }
+
+    // MARK: - Tab Content
+
+    private var tabContent: some View {
+        VStack(spacing: 0) {
+            // Tab picker
+            Picker("View", selection: $selectedTab) {
+                Label("Table", systemImage: "tablecells").tag(0)
+                Label("Photo", systemImage: "photo").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            // Tab body
+            if selectedTab == 0 {
+                tableTab
+            } else {
+                photoTab
+            }
+        }
+    }
+
+    // MARK: - Table Tab
+
+    private var tableTab: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+
+                if !rows.isEmpty {
+                    translationTable
+                }
+
+                if !debugInfo.isEmpty {
+                    GroupBox {
+                        Text(debugInfo)
+                            .font(.caption2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    } label: {
+                        Label("Debug", systemImage: "ladybug")
+                    }
+                }
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - Photo Tab
+
+    private var photoTab: some View {
+        Group {
+            if let image {
+                ImageOverlayView(
+                    image: image,
+                    overlays: overlays,
+                    showOverlay: $showOverlay
+                )
+            } else {
+                ContentUnavailableView("No Image", systemImage: "photo", description: Text("Image could not be loaded."))
+            }
+        }
+    }
+
+    // MARK: - Loading / Error Views
+
+    private var loadingView: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            ProgressView()
+            Text(statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding()
+    }
+
+    private func errorView(_ message: String) -> some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "exclamationmark.triangle")
+                .font(.title)
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .padding()
     }
 
     // MARK: - Translation Table
@@ -163,11 +234,22 @@ struct ShareView: View {
                 translationMap[response.sourceText] = response.targetText
             }
 
-            // Only include rows where the translation differs from the original
+            // Build table rows — only include where translation differs
             rows = translatableLines.compactMap { line in
                 let translated = translationMap[line] ?? line
                 guard translated.lowercased() != line.lowercased() else { return nil }
                 return TranslationRow(original: line, translated: translated)
+            }
+
+            // Build overlay positions — match positioned texts with their translations
+            overlays = positionedTexts.compactMap { positioned in
+                guard !isSkippable(positioned.text) else { return nil }
+                guard let translated = translationMap[positioned.text],
+                      translated.lowercased() != positioned.text.lowercased() else { return nil }
+                return TranslatedOverlay(
+                    translated: translated,
+                    boundingBox: positioned.boundingBox
+                )
             }
         } catch {
             errorMessage = "Translation failed: \(error.localizedDescription)"
@@ -231,8 +313,8 @@ struct ShareView: View {
 
         statusMessage = "Recognizing text..."
         do {
-            let fullText = try await TextRecognizer.recognizeText(in: image!)
-            recognizedLines = fullText.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            positionedTexts = try await TextRecognizer.recognizeWithPositions(in: image!)
+            recognizedLines = positionedTexts.map(\.text)
         } catch {
             if let recognitionError = error as? RecognitionError,
                case .noTextFound = recognitionError {
