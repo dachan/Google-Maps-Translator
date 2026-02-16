@@ -142,15 +142,15 @@ struct ShareView: View {
     // MARK: - Translation Logic
 
     private func translateLines(using session: TranslationSession) async {
+        // Filter out numbers and prices entirely
         let translatableLines = recognizedLines.filter { !isSkippable($0) }
 
         guard !translatableLines.isEmpty else {
-            // Everything is prices/numbers — show as-is
-            rows = recognizedLines.map { TranslationRow(original: $0, translated: $0) }
+            errorMessage = "No translatable text found (only numbers/prices detected)."
             return
         }
 
-        // Batch translate only non-skippable lines
+        // Batch translate
         let requests = translatableLines.enumerated().map { (index, line) in
             TranslationSession.Request(sourceText: line, clientIdentifier: "\(index)")
         }
@@ -163,17 +163,13 @@ struct ShareView: View {
                 translationMap[response.sourceText] = response.targetText
             }
 
-            rows = recognizedLines.map { line in
-                if isSkippable(line) {
-                    return TranslationRow(original: line, translated: line)
-                } else {
-                    let translated = translationMap[line] ?? line
-                    return TranslationRow(original: line, translated: translated)
-                }
+            rows = translatableLines.map { line in
+                let translated = translationMap[line] ?? line
+                return TranslationRow(original: line, translated: translated)
             }
         } catch {
             errorMessage = "Translation failed: \(error.localizedDescription)"
-            rows = recognizedLines.map { TranslationRow(original: $0, translated: "") }
+            rows = translatableLines.map { TranslationRow(original: $0, translated: "") }
         }
     }
 
