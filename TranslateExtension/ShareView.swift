@@ -234,18 +234,16 @@ struct ShareView: View {
                 translationMap[response.sourceText] = response.targetText
             }
 
-            // Build table rows — only include where translation differs
-            rows = translatableLines.compactMap { line in
+            // Build table rows
+            rows = translatableLines.map { line in
                 let translated = translationMap[line] ?? line
-                guard translated.lowercased() != line.lowercased() else { return nil }
                 return TranslationRow(original: line, translated: translated)
             }
 
             // Build overlay positions — match positioned texts with their translations
             overlays = positionedTexts.compactMap { positioned in
                 guard !isSkippable(positioned.text) else { return nil }
-                guard let translated = translationMap[positioned.text],
-                      translated.lowercased() != positioned.text.lowercased() else { return nil }
+                guard let translated = translationMap[positioned.text] else { return nil }
                 return TranslatedOverlay(
                     translated: translated,
                     boundingBox: positioned.boundingBox
