@@ -36,11 +36,13 @@ struct ImageLoader {
 
         var targetURL = url
 
-        // If it's a short link, resolve it by following redirects (without downloading the body)
+        // If it's a short link, resolve it by following redirects
         if url.host?.contains("goo.gl") == true || url.host?.contains("maps.app") == true {
             if let resolved = await resolveRedirects(for: url) {
                 targetURL = resolved
             }
+            // If redirect didn't resolve to a different URL, the short link itself becomes
+            // the target — the fallback HTML parsing below will handle it
         }
 
         // Try to extract a googleusercontent image URL from the Maps URL itself
@@ -57,9 +59,11 @@ struct ImageLoader {
         }
 
         // Fallback: fetch the page and parse HTML
+        var pageRequest = URLRequest(url: targetURL)
+        pageRequest.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         let (data, response): (Data, URLResponse)
         do {
-            (data, response) = try await URLSession.shared.data(from: targetURL)
+            (data, response) = try await URLSession.shared.data(for: pageRequest)
         } catch {
             throw ImageLoaderError.networkError(error)
         }
@@ -153,26 +157,52 @@ struct ImageLoader {
 
     // MARK: - Redirect Resolution
 
-    /// Resolves a short URL to its final destination without downloading the body.
+    /// Resolves a short URL to its final destination by following HTTP redirects.
     private static func resolveRedirects(for url: URL) async -> URL? {
         let delegate = RedirectTracker()
         let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
 
+        // Use GET with browser-like headers — Google short links often reject HEAD requests
         var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
+        request.httpMethod = "GET"
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
 
         do {
-            let (_, response) = try await session.data(for: request)
-            return (response as? HTTPURLResponse)?.url ?? delegate.finalURL
-        } catch {
-            // HEAD might fail, try GET
-            do {
-                let (_, response) = try await session.data(from: url)
-                return (response as? HTTPURLResponse)?.url ?? delegate.finalURL
-            } catch {
-                return delegate.finalURL
+            let (data, response) = try await session.data(for: request)
+            let resolvedURL = response.url ?? delegate.finalURL
+
+            // If the redirect resolved to a Maps URL, use it
+            if let resolved = resolvedURL,
+               resolved.absoluteString.contains("google.com/maps") {
+                return resolved
             }
+
+            // Some Google short links redirect via JavaScript/meta refresh instead of HTTP 3xx
+            // Check the HTML for a meta refresh or canonical URL
+            if let html = String(data: data, encoding: .utf8) {
+                // Look for meta refresh: <meta http-equiv="refresh" content="0;url=...">
+                if let match = firstMatch(pattern: #"<meta[^>]*http-equiv\s*=\s*"?refresh"?[^>]*content\s*=\s*"[^"]*url=([^">\s]+)"#, in: html),
+                   let refreshURL = URL(string: match) {
+                    return refreshURL
+                }
+                // Look for canonical link
+                if let match = firstMatch(pattern: #"<link[^>]*rel\s*=\s*"?canonical"?[^>]*href\s*=\s*"([^"]+)"#, in: html),
+                   let canonicalURL = URL(string: match),
+                   canonicalURL.absoluteString.contains("google.com/maps") {
+                    return canonicalURL
+                }
+                // Look for window.location or redirect URL in script
+                if let match = firstMatch(pattern: #"(https://www\.google\.com/maps/[^\s"'<>\\]+)"#, in: html),
+                   let mapsURL = URL(string: match) {
+                    return mapsURL
+                }
+            }
+
+            return resolvedURL
+        } catch {
+            return delegate.finalURL
         }
     }
 
