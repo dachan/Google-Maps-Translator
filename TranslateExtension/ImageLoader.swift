@@ -171,29 +171,32 @@ struct ImageLoader {
 
         do {
             let (data, response) = try await session.data(for: request)
+
+            // First check if any redirect in the chain was a Google Maps URL
+            // (The RedirectTracker stops following once it sees one)
+            if let mapsRedirect = delegate.allRedirects.first(where: { $0.absoluteString.contains("google.com/maps") }) {
+                return mapsRedirect
+            }
+
             let resolvedURL = response.url ?? delegate.finalURL
 
-            // If the redirect resolved to a Maps URL, use it
+            // If the final response URL is a Maps URL, use it
             if let resolved = resolvedURL,
                resolved.absoluteString.contains("google.com/maps") {
                 return resolved
             }
 
             // Some Google short links redirect via JavaScript/meta refresh instead of HTTP 3xx
-            // Check the HTML for a meta refresh or canonical URL
             if let html = String(data: data, encoding: .utf8) {
-                // Look for meta refresh: <meta http-equiv="refresh" content="0;url=...">
                 if let match = firstMatch(pattern: #"<meta[^>]*http-equiv\s*=\s*"?refresh"?[^>]*content\s*=\s*"[^"]*url=([^">\s]+)"#, in: html),
                    let refreshURL = URL(string: match) {
                     return refreshURL
                 }
-                // Look for canonical link
                 if let match = firstMatch(pattern: #"<link[^>]*rel\s*=\s*"?canonical"?[^>]*href\s*=\s*"([^"]+)"#, in: html),
                    let canonicalURL = URL(string: match),
                    canonicalURL.absoluteString.contains("google.com/maps") {
                     return canonicalURL
                 }
-                // Look for window.location or redirect URL in script
                 if let match = firstMatch(pattern: #"(https://www\.google\.com/maps/[^\s"'<>\\]+)"#, in: html),
                    let mapsURL = URL(string: match) {
                     return mapsURL
@@ -202,6 +205,11 @@ struct ImageLoader {
 
             return resolvedURL
         } catch {
+            // Even if the request failed (e.g. we cancelled it after getting the redirect),
+            // the delegate may have captured useful redirect URLs
+            if let mapsRedirect = delegate.allRedirects.first(where: { $0.absoluteString.contains("google.com/maps") }) {
+                return mapsRedirect
+            }
             return delegate.finalURL
         }
     }
@@ -318,6 +326,8 @@ struct ImageLoader {
 
 private class RedirectTracker: NSObject, URLSessionTaskDelegate {
     var finalURL: URL?
+    /// All redirect URLs in order
+    var allRedirects: [URL] = []
 
     func urlSession(
         _ session: URLSession,
@@ -326,7 +336,17 @@ private class RedirectTracker: NSObject, URLSessionTaskDelegate {
         newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
-        finalURL = request.url
+        if let url = request.url {
+            finalURL = url
+            allRedirects.append(url)
+
+            // If we got a Google Maps URL, stop following further redirects
+            // — we have what we need and further redirects may lead to consent pages
+            if url.absoluteString.contains("google.com/maps") {
+                completionHandler(nil) // Cancel further redirects
+                return
+            }
+        }
         completionHandler(request)
     }
 }
