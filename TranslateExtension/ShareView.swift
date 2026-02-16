@@ -163,8 +163,10 @@ struct ShareView: View {
                 translationMap[response.sourceText] = response.targetText
             }
 
-            rows = translatableLines.map { line in
+            // Only include rows where the translation differs from the original
+            rows = translatableLines.compactMap { line in
                 let translated = translationMap[line] ?? line
+                guard translated.lowercased() != line.lowercased() else { return nil }
                 return TranslationRow(original: line, translated: translated)
             }
         } catch {
