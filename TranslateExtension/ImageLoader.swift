@@ -27,6 +27,10 @@ struct ImageLoader {
 
     private static let maxDimension: CGFloat = 2048
 
+    /// Browser User-Agent used when fetching pages that reject non-browser requests
+    /// (e.g. Google short links returning 404 for HEAD/default requests).
+    private static let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
     static func loadImage(from url: URL) async throws -> ImageLoadResult {
         // Strategy 1: If this is a short link (maps.app.goo.gl), resolve the redirect first
         //             then extract the image URL from the resolved Google Maps URL.
@@ -60,7 +64,7 @@ struct ImageLoader {
 
         // Fallback: fetch the page and parse HTML
         var pageRequest = URLRequest(url: targetURL)
-        pageRequest.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        pageRequest.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await URLSession.shared.data(for: pageRequest)
@@ -68,11 +72,7 @@ struct ImageLoader {
             throw ImageLoaderError.networkError(error)
         }
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...399).contains(httpResponse.statusCode) else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            throw ImageLoaderError.downloadFailed(statusCode: code, url: targetURL.absoluteString)
-        }
+        let httpResponse = try validate(response, url: targetURL)
 
         let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? ""
 
@@ -118,8 +118,6 @@ struct ImageLoader {
         // Look for googleusercontent.com URL embedded in the decoded string
         // The pattern is: 6shttps://....googleusercontent.com/...(terminated by ! or & or end of string)
         let patterns = [
-            #"6shttps://(gz[0-9]+\.googleusercontent\.com/[^!&\s]+)"#,
-            #"6shttps://(lh[0-9]+\.googleusercontent\.com/[^!&\s]+)"#,
             #"6shttps://([a-z0-9-]+\.googleusercontent\.com/[^!&\s]+)"#,
             #"6shttps://([a-z0-9-]+\.ggpht\.com/[^!&\s]+)"#,
         ]
@@ -166,7 +164,7 @@ struct ImageLoader {
         // Use GET with browser-like headers — Google short links often reject HEAD requests
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
 
         do {
@@ -218,16 +216,18 @@ struct ImageLoader {
 
     private static func downloadImage(from url: URL) async throws -> UIImage {
         let (data, response) = try await URLSession.shared.data(from: url)
+        _ = try validate(response, url: url)
+        return try decodeAndDownscale(data)
+    }
 
+    /// Validates that a response is a successful (2xx/3xx) HTTP response.
+    private static func validate(_ response: URLResponse, url: URL) throws -> HTTPURLResponse {
         guard let httpResponse = response as? HTTPURLResponse,
               (200...399).contains(httpResponse.statusCode) else {
-            throw ImageLoaderError.downloadFailed(
-                statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0,
-                url: url.absoluteString
-            )
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw ImageLoaderError.downloadFailed(statusCode: code, url: url.absoluteString)
         }
-
-        return try decodeAndDownscale(data)
+        return httpResponse
     }
 
     private static func decodeAndDownscale(_ data: Data) throws -> UIImage {
